@@ -1,0 +1,50 @@
+name: tg-digest
+
+# Ежедневная рассылка свежих объявлений ЦИАН в ТГ-группу «My beautiful flat».
+# Данные кладёт локальный краулер (real-estate-radar) через deploy_pages.py:
+# data/listings.json с полем fresh (is_new). Рассылка срабатывает на пуш
+# (сразу после локального сбора), schedule — страховка, если пуша не было.
+# Первый запуск шлёт welcome-сообщение со ссылкой на дашборд (закрепляется).
+on:
+  push:
+    paths:
+      - "index.html"
+      - "data/listings.json"
+      - "scripts/tg_digest.py"
+      - ".github/workflows/tg-digest.yml"
+  schedule:
+    - cron: "0 7 * * *"   # 10:00 МСК — страховка после утреннего сбора
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tg-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: send digest
+        id: send
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/tg_digest.py
+
+      - name: commit state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/digest_state.json || true
+          git diff --cached --quiet || git commit -m "tg-digest: state $(date -u +%F)"
+          git push
