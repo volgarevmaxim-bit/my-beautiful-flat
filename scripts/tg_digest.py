@@ -93,13 +93,16 @@ def fmt_dev(v):
 
 
 def resolve_chat(token):
-    """chat_id из env, иначе — getUpdates + название из config/telegram.json."""
+    """chat_id: env → config/telegram.json → getUpdates по названию."""
     cid = env("TELEGRAM_CHAT_ID")
     if cid:
         return int(cid)
     titles = []
     if os.path.exists(TG_CFG):
         cfg = json.load(open(TG_CFG, encoding="utf-8"))
+        if cfg.get("chat_id"):
+            print("resolved chat from config:", cfg["chat_id"])
+            return int(cfg["chat_id"])
         titles = cfg.get("chat_titles") or []
     upd = api_call(token, "getUpdates", {"timeout": 0, "limit": 100,
                                          "allowed_updates": ["message"]})
@@ -131,8 +134,8 @@ def main():
     token = env("TELEGRAM_BOT_TOKEN")
     if not token:
         sys.exit("FAIL: TELEGRAM_BOT_TOKEN не задан")
-    chat_id = resolve_chat(token)
     state = load_state()
+    chat_id = int(state["chat_id"]) if state.get("chat_id") else resolve_chat(token)
 
     if not state.get("welcome_sent"):
         send(token, chat_id,
