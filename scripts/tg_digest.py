@@ -153,6 +153,10 @@ def main():
     sold = data.get("sold_ids") or []
     snap = data.get("snapshot_date") or "—"
 
+    if state.get("last_digest_date") == snap:
+        print(f"digest for {snap} already sent — skip")
+        return
+
     if not fresh and not sold:
         send(token, chat_id,
              f"Радар: новых объявлений и снятий за {snap} нет "
