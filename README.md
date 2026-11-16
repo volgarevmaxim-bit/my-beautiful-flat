@@ -4,4 +4,6 @@
 
 - данные: выдачи cian.ru (вторичка и новостройки, 3–6 комнат, до 60 млн ₽)
 - ориентиры: irn.ru/price (цены ₽/м² по районам, вторичный рынок)
+- блокнот с шорт-листом: /notebook/ (карта со школьными зонами, статусы, заметки; шорт-лист хранится в localStorage браузера)
+- разовая настройка «открывать ЦИАН в Firefox»: скачать bat из /firefox_handler/ и запустить register_firefox_handler.bat (без админа)
 - сборка: real-estate-radar (private), scripts/build_dashboard.py

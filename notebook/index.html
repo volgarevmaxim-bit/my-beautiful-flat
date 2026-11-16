@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Блокнот — шорт-лист квартир</title>
+<link rel="stylesheet" href="./vendor/leaflet/leaflet.css">
+<style>
+:root {
+  --bg: #f7f8fa;
+  --panel: #ffffff;
+  --border: #e3e6ea;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --danger: #c0392b;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 14px/1.45 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+button, select, textarea, input { font: inherit; }
+a { color: var(--accent); }
+
+/* ---- top bar ---- */
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+#topbar .title { font-weight: 700; font-size: 15px; }
+#counter { font-size: 13px; color: var(--muted); white-space: nowrap; }
+#counter b { color: var(--text); }
+#topbar .spacer { flex: 1; }
+#topbar .btn {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+#topbar .btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---- main ---- */
+#main { flex: 1 1 auto; display: flex; min-height: 0; }
+#mapWrap { flex: 1 1 auto; position: relative; min-width: 0; }
+#map { position: absolute; inset: 0; background: #e9ecef; }
+
+/* layer control — sibling of #map, NOT its child (L.map wipes #map children) */
+#mapControls {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 1000;
+  background: rgba(255,255,255,0.96);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  max-width: 240px;
+}
+#mapControls .ctl-title { font-size: 11px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .04em; }
+.seg { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 8px; }
+.seg button {
+  flex: 1; border: 0; background: transparent; padding: 4px 10px; cursor: pointer;
+  font-size: 12px; color: var(--muted);
+}
+.seg button.active { background: var(--accent); color: #fff; }
+.ctl-row { display: flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 1px 0; cursor: pointer; }
+.ctl-row input { cursor: pointer; }
+
+/* ---- sidebar ---- */
+#sidebar {
+  flex: 0 0 380px;
+  width: 380px;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#listPanel { flex: 0 0 auto; max-height: 42%; display: flex; flex-direction: column; border-bottom: 1px solid var(--border); }
+.panel-head { padding: 8px 14px; font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+#list { overflow-y: auto; min-height: 0; }
+.list-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px; border-bottom: 1px solid #f0f2f4; cursor: pointer;
+}
+.list-item:hover { background: #f3f6fb; }
+.list-item.active { background: #e8f0fe; }
+.list-item .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+.list-item .li-body { flex: 1; min-width: 0; }
+.list-item .li-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.list-item .li-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+#detailPanel { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+#detail { padding: 12px 14px 20px; }
+.dl { display: grid; grid-template-columns: 110px 1fr; gap: 6px 10px; font-size: 13.5px; margin: 0 0 6px; }
+.dl dt { color: var(--muted); }
+.dl dd { margin: 0; }
+.dl .price { font-weight: 700; font-size: 16px; }
+.badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }
+.badge { font-size: 11.5px; padding: 2px 8px; border-radius: 10px; border: 1px solid transparent; }
+.badge.sold { background: #fdecea; color: #c0392b; border-color: #f5c6c0; }
+.badge.fresh { background: #e8f8f0; color: #1e7d46; border-color: #bfe8d0; }
+.card-sec { margin-top: 14px; }
+.card-sec h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 6px; }
+.zone-line { font-size: 13px; padding: 3px 0; border-bottom: 1px dashed #eef0f2; }
+.zone-line:last-child { border-bottom: 0; }
+.disclaimer { font-size: 11.5px; color: var(--muted); font-style: italic; margin-top: 8px; line-height: 1.4; }
+.btn-row { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.btn-row .btn {
+  display: inline-block; text-align: center; border: 1px solid var(--border);
+  background: var(--panel); padding: 8px 12px; border-radius: 6px; cursor: pointer;
+  color: var(--text); text-decoration: none; font-size: 13px;
+}
+.btn-row .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-row .btn.danger { color: var(--danger); border-color: #f5c6c0; }
+.btn-row .btn:hover { filter: brightness(0.96); }
+.btn-row .btn.small { font-size: 12px; padding: 5px 8px; }
+.field-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+.field-row label { color: var(--muted); min-width: 62px; }
+.field-row select { flex: 1; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+textarea#noteInput {
+  width: 100%; min-height: 64px; resize: vertical; padding: 8px;
+  border: 1px solid var(--border); border-radius: 6px; font-size: 13px;
+}
+.muted { color: var(--muted); }
+.empty { padding: 30px 18px; text-align: center; color: var(--muted); font-size: 13.5px; }
+.empty .big { font-size: 15px; color: var(--text); font-weight: 600; margin-bottom: 6px; }
+
+/* ---- toasts ---- */
+#toasts { position: fixed; bottom: 14px; right: 14px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; }
+.toast {
+  background: #1f2937; color: #fff; padding: 10px 14px; border-radius: 8px;
+  font-size: 13px; max-width: 340px; box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+  animation: toastin .18s ease-out;
+}
+.toast.error { background: #c0392b; }
+.toast.ok { background: #1e7d46; }
+@keyframes toastin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+#banner { display: none; background: #fff7e6; color: #8a6d00; padding: 6px 14px; font-size: 12.5px; border-bottom: 1px solid #f0dfae; }
+</style>
+</head>
+<body>
+<div id="banner"></div>
+<header id="topbar">
+  <span class="title">Блокнот</span>
+  <span id="counter"></span>
+  <span class="spacer"></span>
+  <button class="btn" id="btnExport" title="Скачать шорт-лист как JSON">Экспорт JSON</button>
+  <button class="btn" id="btnImport" title="Импорт JSON (свой экспорт или экспорт локального приложения)">Импорт JSON</button>
+  <a class="btn" href="../index.html" title="К графику цен">к графику цен</a>
+</header>
+<main id="main">
+  <div id="mapWrap">
+    <div id="map"></div>
+    <div id="mapControls">
+      <div class="ctl-title">Режим зон</div>
+      <div class="seg">
+        <button id="modeCar" class="active" type="button">Авто</button>
+        <button id="modePt" type="button">ОТ</button>
+      </div>
+      <label class="ctl-row"><input type="checkbox" id="chkZones" checked> Зоны доступности</label>
+      <label class="ctl-row"><input type="checkbox" id="chkSchools" checked> Школы</label>
+      <label class="ctl-row"><input type="checkbox" id="chkMarkers" checked> Шорт-лист</label>
+    </div>
+  </div>
+  <aside id="sidebar">
+    <div id="listPanel">
+      <div class="panel-head">Шорт-лист</div>
+      <div id="list"></div>
+    </div>
+    <div id="detailPanel">
+      <div id="detail"></div>
+    </div>
+  </aside>
+</main>
+<input type="file" id="importInput" accept=".json,application/json" style="display:none">
+<div id="toasts"></div>
+
+<script src="./vendor/leaflet/leaflet.js"></script>
+<script>
+"use strict";
+
+/* ============================== constants ============================== */
+var LS_KEY = "mbflat.shortlist.v1";
+var STATUSES = [
+  { key: "new",        label: "Новое",           color: "#3388ff" },
+  { key: "clarify",    label: "Уточнить",        color: "#f39c12" },
+  { key: "visit",      label: "Смотреть",        color: "#27ae60" },
+  { key: "negotiate",  label: "Обсуждать цену",  color: "#8e44ad" },
+  { key: "deal_check", label: "Проверка сделки", color: "#c0392b" },
+  { key: "rejected",   label: "Отказ",           color: "#95a5a6" }
+];
+var STATUS_BY_KEY = {};
+var STATUS_LABEL = {};
+var STATUS_COLOR = {};
+STATUSES.forEach(function (s) { STATUS_BY_KEY[s.key] = s; STATUS_LABEL[s.key] = s.label; STATUS_COLOR[s.key] = s.color; });
+
+var DISCLAIMER = "Попадание в расчётную зону. Не подтверждённое время поездки; маршрут необходимо проверить отдельно.";
+var MODE_LABEL = { driving: "авто", public_transport: "ОТ" };
+var ZONE_COLOR = { driving: "#1e90ff", public_transport: "#e67e22" };
+var MOSCOW_CENTER = [55.65, 37.55];
+
+/* ============================== state ============================== */
+var state = {
+  mode: "car",                  // "car" | "pt"
+  shortlist: null,              // {version:1, items:[...]}
+  listingsFull: null,           // {snapshot_date, listings:[...]} — lazily loaded
+  zones: { car: null, pt: null },
+  schools: [],                  // selected==1 rows
+  selectedId: null,             // id of open shortlist item (number)
+  preview: null                 // {listing} for #cid not yet in shortlist
+};
+
+var map = null;
+var layerZones = null;
+var layerSchools = null;
+var layerMarkers = null;
+
+/* ============================== localStorage ============================== */
+function loadShortlist() {
+  try {
+    var raw = localStorage.getItem(LS_KEY);
+    if (!raw) return { version: 1, items: [] };
+    var d = JSON.parse(raw);
+    if (!d || !Array.isArray(d.items)) return { version: 1, items: [] };
+    d.version = 1;
+    return d;
+  } catch (e) {
+    return { version: 1, items: [] };
+  }
+}
+function saveShortlist() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(state.shortlist)); } catch (e) {}
+}
+function findItem(id) {
+  for (var i = 0; i < state.shortlist.items.length; i++) {
+    if (state.shortlist.items[i].id === id) return state.shortlist.items[i];
+  }
+  return null;
+}
+function addItem(listing, opts) {
+  opts = opts || {};
+  var id = Number(listing.id);
+  var existing = findItem(id);
+  if (existing) return existing;
+  var item = {
+    id: id,
+    url: listing.url || opts.url || "",
+    added_at: new Date().toISOString(),
+    status: opts.status || "new",
+    note: opts.note || "",
+    listing: listing
+  };
+  state.shortlist.items.push(item);
+  saveShortlist();
+  return item;
+}
+function removeItem(id) {
+  state.shortlist.items = state.shortlist.items.filter(function (it) { return it.id !== id; });
+  saveShortlist();
+}
+function updateItem(id, patch) {
+  var it = findItem(id);
+  if (!it) return;
+  for (var k in patch) it[k] = patch[k];
+  saveShortlist();
+}
+
+/* ============================== helpers ============================== */
+function fmtMln(p) {
+  if (p == null) return "—";
+  return (Number(p) / 1e6).toFixed(2) + " млн ₽";
+}
+function fmtM2(p) {
+  if (p == null) return "—";
+  return Math.round(Number(p) / 1000) + " тыс ₽/м²";
+}
+function fmtArea(a) { return a == null ? "—" : a + " м²"; }
+function fmtFloor(f, fc) {
+  if (f == null && fc == null) return "—";
+  return (f == null ? "—" : f) + "/" + (fc == null ? "—" : fc) + " эт.";
+}
+function esc(s) {
+  if (s == null) return "";
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function toast(msg, kind) {
+  var el = document.createElement("div");
+  el.className = "toast " + (kind || "");
+  el.textContent = msg;
+  document.getElementById("toasts").appendChild(el);
+  setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 4200);
+}
+function setBanner(msg) {
+  var b = document.getElementById("banner");
+  if (msg) { b.style.display = "block"; b.textContent = msg; }
+  else { b.style.display = "none"; b.textContent = ""; }
+}
+
+function normalizeStatus(s) {
+  if (!s) return "new";
+  if (STATUS_BY_KEY[s]) return s;
+  var low = String(s).toLowerCase();
+  if (low === "archived" || low === "архив") return "rejected";
+  for (var i = 0; i < STATUSES.length; i++) {
+    if (STATUSES[i].label.toLowerCase() === low) return STATUSES[i].key;
+  }
+  return "new";
+}
+
+/* ============================== CSV parse (RFC4180-ish) ============================== */
+function parseCSV(text) {
+  var rows = [], row = [], field = "", inQ = false;
+  for (var i = 0; i < text.length; i++) {
+    var c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQ = false;
+      } else field += c;
+    } else {
+      if (c === '"') inQ = true;
+      else if (c === ",") { row.push(field); field = ""; }
+      else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+      else if (c === "\r") { /* skip */ }
+      else field += c;
+    }
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+/* ============================== point-in-polygon (ray-cast even-odd) ============================== */
+function pointInRing(lat, lon, ring) {
+  var inside = false;
+  for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    var xi = ring[i][0], yi = ring[i][1];
+    var xj = ring[j][0], yj = ring[j][1];
+    if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+function pointInPoly(lat, lon, poly) {
+  if (!pointInRing(lat, lon, poly[0])) return false;
+  for (var h = 1; h < poly.length; h++) {
+    if (pointInRing(lat, lon, poly[h])) return false;
+  }
+  return true;
+}
+function zonesHits(lat, lon) {
+  var gc = state.zones[state.mode];
+  var out = [];
+  if (!gc || lat == null || lon == null) return out;
+  var bySchool = {};
+  for (var i = 0; i < gc.features.length; i++) {
+    var f = gc.features[i];
+    var polys = f.geometry && f.geometry.coordinates;
+    if (!polys) continue;
+    var hit = false;
+    for (var p = 0; p < polys.length; p++) {
+      if (pointInPoly(lat, lon, polys[p])) { hit = true; break; }
+    }
+    if (hit) {
+      var pr = f.properties || {};
+      var sid = pr.school_id;
+      var mn = Number(pr.min);
+      if (!(sid in bySchool) || mn < bySchool[sid].min) {
+        bySchool[sid] = { name: pr.name, min: mn };
+      }
+    }
+  }
+  for (var k in bySchool) out.push(bySchool[k]);
+  out.sort(function (a, b) { return a.min - b.min; });
+  return out;
+}
+
+/* ============================== firefox-first open ============================== */
+function openCian(url) {
+  if (!url) return;
+  var isFF = /Firefox\//i.test(navigator.userAgent);
+  if (isFF) {
+    try { window.open(url, "_blank"); } catch (e) {}
+    return;
+  }
+  var blurred = false;
+  var onBlur = function () { blurred = true; };
+  window.addEventListener("blur", onBlur, { once: true });
+  try { window.open("myflat:" + url, "_blank"); } catch (e) {}
+  setTimeout(function () {
+    window.removeEventListener("blur", onBlur);
+    if (!blurred && document.hasFocus()) {
+      try { window.open(url, "_blank"); } catch (e) {}
+    }
+  }, 1200);
+}
+
+/* ============================== data loading ============================== */
+function loadZones() {
+  var modes = { car: "car_zones.geojson", pt: "pt_zones.geojson" };
+  var pending = 0, failed = false;
+  Object.keys(modes).forEach(function (m) {
+    pending++;
+    fetch("./data/zones/" + modes[m])
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (d) { state.zones[m] = d; })
+      .catch(function () { failed = true; })
+      .then(function () { if (--pending === 0) { renderZoneLayer(); if (failed) setBanner("Часть данных зон не загрузилась — карта доступности может быть неполной."); } });
+  });
+}
+function loadSchools() {
+  fetch("./data/schools.csv")
+    .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
+    .then(function (text) {
+      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // strip BOM (utf-8-sig)
+      var rows = parseCSV(text);
+      if (!rows.length) return;
+      var header = rows[0];
+      state.schools = [];
+      for (var i = 1; i < rows.length; i++) {
+        var rec = {};
+        for (var c = 0; c < header.length; c++) rec[header[c]] = (rows[i][c] != null ? rows[i][c] : "");
+        if (String(rec.selected).trim() === "1") state.schools.push(rec);
+      }
+      renderSchoolLayer();
+    })
+    .catch(function () { setBanner("Не удалось загрузить список школ."); });
+}
+function loadListingsFull() {
+  if (state.listingsFull) return Promise.resolve(state.listingsFull);
+  return fetch("../data/listings_full.json")
+    .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(function (d) { state.listingsFull = d; return d; })
+    .catch(function (e) { return null; });
+}
+
+/* ============================== map layers ============================== */
+function renderZoneLayer() {
+  var gc = state.zones[state.mode];
+  if (!layerZones) layerZones = L.layerGroup().addTo(map);
+  layerZones.clearLayers();
+  if (!gc) return;
+  var color = ZONE_COLOR[state.mode === "car" ? "driving" : "public_transport"];
+  var modeKey = state.mode === "car" ? "driving" : "public_transport";
+  L.geoJSON(gc, {
+    style: function () { return { color: color, weight: 1.2, fillColor: color, fillOpacity: 0.15 }; },
+    onEachFeature: function (f, lyr) {
+      var p = f.properties || {};
+      lyr.bindPopup(esc(p.name || p.school_id) + " — " + p.min + " мин (" + MODE_LABEL[modeKey] + ")");
+    }
+  }).addTo(layerZones);
+}
+function renderSchoolLayer() {
+  if (!layerSchools) layerSchools = L.layerGroup().addTo(map);
+  layerSchools.clearLayers();
+  state.schools.forEach(function (s) {
+    var lat = parseFloat(s.lat), lon = parseFloat(s.lon);
+    if (isNaN(lat) || isNaN(lon)) return;
+    L.circleMarker([lat, lon], {
+      radius: 5, color: "#ffffff", weight: 1.5, fillColor: "#16a085", fillOpacity: 0.95
+    }).bindPopup(esc(s.name)).addTo(layerSchools);
+  });
+}
+function renderMarkerLayer() {
+  if (!layerMarkers) layerMarkers = L.layerGroup().addTo(map);
+  layerMarkers.clearLayers();
+  var lats = [];
+  state.shortlist.items.forEach(function (it) {
+    var l = it.listing || {};
+    if (l.lat == null || l.lon == null) return;
+    lats.push([l.lat, l.lon]);
+    var color = STATUS_COLOR[it.status] || STATUS_COLOR.new;
+    var mk = L.circleMarker([l.lat, l.lon], {
+      radius: 7, color: "#ffffff", weight: 1.5, fillColor: color, fillOpacity: 0.95
+    });
+    mk.on("click", function () { selectItem(it.id, true); });
+    mk.bindPopup(esc(l.address || l.url || ("Циан #" + it.id)) + "<br><span style='color:" + color + "'>" + esc(STATUS_LABEL[it.status] || it.status) + "</span>");
+    mk.addTo(layerMarkers);
+  });
+  if (lats.length) {
+    var b = L.latLngBounds(lats);
+    if (b.isValid()) map.fitBounds(b, { padding: [30, 30], maxZoom: 14 });
+  }
+}
+
+/* ============================== render sidebar ============================== */
+function renderCounter() {
+  var n = state.shortlist.items.length;
+  document.getElementById("counter").innerHTML = "<b>" + n + "</b> в шорт-листе";
+}
+function renderList() {
+  var el = document.getElementById("list");
+  el.innerHTML = "";
+  if (!state.shortlist.items.length) {
+    el.innerHTML = '<div class="empty muted">Шорт-лист пуст.</div>';
+    return;
+  }
+  state.shortlist.items.forEach(function (it) {
+    var l = it.listing || {};
+    var div = document.createElement("div");
+    div.className = "list-item" + (it.id === state.selectedId ? " active" : "");
+    var dot = document.createElement("span");
+    dot.className = "dot";
+    dot.style.background = STATUS_COLOR[it.status] || STATUS_COLOR.new;
+    var body = document.createElement("div");
+    body.className = "li-body";
+    var t = document.createElement("div");
+    t.className = "li-title";
+    t.textContent = l.address || l.url || ("Циан #" + it.id);
+    var s = document.createElement("div");
+    s.className = "li-sub";
+    s.textContent = fmtMln(l.price) + (l.rooms_label ? " · " + l.rooms_label : "");
+    body.appendChild(t); body.appendChild(s);
+    div.appendChild(dot); div.appendChild(body);
+    div.onclick = function () { selectItem(it.id, true); };
+    el.appendChild(div);
+  });
+}
+
+function selectItem(id, focusMap) {
+  state.preview = null;
+  state.selectedId = id;
+  renderList();
+  renderDetail();
+  if (focusMap) {
+    var it = findItem(id);
+    var l = it && it.listing;
+    if (l && l.lat != null && l.lon != null) map.setView([l.lat, l.lon], Math.max(map.getZoom(), 13));
+  }
+}
+
+function zoneBlockHtml(lat, lon) {
+  var html = '<div class="card-sec"><h3>Доступность школ (' + (state.mode === "car" ? "авто" : "ОТ") + ")</h3>";
+  if (lat == null || lon == null) {
+    html += '<div class="muted">Нет координат — зоны недоступны.</div></div>';
+    return html;
+  }
+  var hits = zonesHits(lat, lon);
+  if (!hits.length) {
+    html += '<div class="muted">Вне расчётных зон.</div>';
+  } else {
+    hits.forEach(function (h) {
+      html += '<div class="zone-line">' + esc(h.name) + " — от " + h.min + " мин (" + (state.mode === "car" ? "авто" : "ОТ") + ")</div>";
+    });
+  }
+  html += '<div class="disclaimer">' + esc(DISCLAIMER) + "</div></div>";
+  return html;
+}
+
+function listingFieldsHtml(l) {
+  var badges = "";
+  if (l.sold_since) badges += '<span class="badge sold">Снято</span>';
+  if (l.is_new) badges += '<span class="badge fresh">Свежее</span>';
+  var rooms = l.rooms_label || (l.rooms != null ? l.rooms + " комн." : "—");
+  return '<div class="dl">' +
+    "<dt>Цена</dt><dd class='price'>" + esc(fmtMln(l.price)) + "</dd>" +
+    "<dt>Цена за м²</dt><dd>" + esc(fmtM2(l.price_m2)) + "</dd>" +
+    "<dt>Комнаты</dt><dd>" + esc(rooms) + "</dd>" +
+    "<dt>Площадь</dt><dd>" + esc(fmtArea(l.total_area)) + "</dd>" +
+    "<dt>Этаж</dt><dd>" + esc(fmtFloor(l.floor, l.floors_count)) + "</dd>" +
+    "<dt>Тип</dt><dd>" + esc(l.housing_type || "—") + "</dd>" +
+    "<dt>Район</dt><dd>" + esc(l.district || "—") + "</dd>" +
+    "<dt>Адрес</dt><dd>" + esc(l.address || "—") + "</dd>" +
+    "<dt>Год</dt><dd>" + esc(l.build_year == null ? "—" : l.build_year) + "</dd>" +
+    "</div>" +
+    (badges ? '<div class="badges">' + badges + "</div>" : "");
+}
+
+function renderDetail() {
+  var el = document.getElementById("detail");
+  var it = state.selectedId != null ? findItem(state.selectedId) : null;
+
+  // preview mode (#cid found, not yet in shortlist)
+  if (state.preview) {
+    var l = state.preview;
+    el.innerHTML = "<h2 style='margin:0 0 8px'>Вариант</h2>" +
+      listingFieldsHtml(l) +
+      zoneBlockHtml(l.lat, l.lon) +
+      '<div class="btn-row">' +
+      '<button class="btn primary" id="btnKeep">Оставить в шорт-листе</button>' +
+      '<button class="btn" id="btnOpenCian">Открыть на Циане</button>' +
+      '<a class="btn small" id="btnDefault" href="#" target="_blank">в браузере по умолчанию</a>' +
+      "</div>";
+    document.getElementById("btnKeep").onclick = function () {
+      var item = addItem(l, { url: l.url });
+      renderCounter();
+      renderMarkerLayer();
+      selectItem(item.id, false);
+      toast("Добавлено в шорт-лист", "ok");
+    };
+    document.getElementById("btnOpenCian").onclick = function () { openCian(l.url); };
+    document.getElementById("btnDefault").href = l.url || "#";
+    return;
+  }
+
+  if (!it) {
+    el.innerHTML = '<div class="empty"><div class="big">Шорт-лист пуст</div>' +
+      "Откройте вариант из «графика цен» — ссылка вида <code>#cid=123456789</code> " +
+      "добавит его сюда. Маркеры и зоны появятся на карте.</div>";
+    return;
+  }
+
+  var ll = it.listing || {};
+  var stOptions = STATUSES.map(function (s) {
+    return '<option value="' + s.key + '"' + (it.status === s.key ? " selected" : "") + ">" + esc(s.label) + "</option>";
+  }).join("");
+  var title = ll.address || ll.url || ("Циан #" + it.id);
+
+  el.innerHTML =
+    "<h2 style='margin:0 0 8px'>" + esc(title) + "</h2>" +
+    listingFieldsHtml(ll) +
+    zoneBlockHtml(ll.lat, ll.lon) +
+    '<div class="card-sec"><h3>Статус</h3>' +
+    '<div class="field-row"><label>Статус</label><select id="statusSelect">' + stOptions + "</select></div>" +
+    "</div>" +
+    '<div class="card-sec"><h3>Заметка</h3>' +
+    '<textarea id="noteInput" placeholder="Заметка сохраняется автоматически…">' + esc(it.note || "") + "</textarea>" +
+    "</div>" +
+    '<div class="btn-row">' +
+    '<button class="btn" id="btnOpenCian">Открыть на Циане</button>' +
+    '<a class="btn small" id="btnDefault" href="#" target="_blank">в браузере по умолчанию</a>' +
+    '<button class="btn danger" id="btnRemove">Убрать из шорт-листа</button>' +
+    "</div>";
+
+  document.getElementById("statusSelect").addEventListener("change", function (e) {
+    updateItem(it.id, { status: e.target.value });
+    renderList(); renderMarkerLayer();
+    toast("Статус: " + STATUS_LABEL[e.target.value]);
+  });
+  var noteEl = document.getElementById("noteInput");
+  var noteTimer = null;
+  noteEl.addEventListener("input", function () {
+    var val = noteEl.value;
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(function () { updateItem(it.id, { note: val }); }, 350);
+  });
+  document.getElementById("btnOpenCian").onclick = function () { openCian(ll.url || it.url); };
+  document.getElementById("btnRemove").onclick = function () {
+    removeItem(it.id);
+    state.selectedId = null;
+    renderCounter(); renderList(); renderMarkerLayer(); renderDetail();
+    toast("Убрано из шорт-листа");
+  };
+  document.getElementById("btnDefault").href = ll.url || it.url || "#";
+}
+
+/* ============================== export / import ============================== */
+function exportObject() {
+  var props = state.shortlist.items.map(function (it) {
+    var l = it.listing || {};
+    return {
+      id: it.id,
+      cian_id: it.id,
+      url: l.url || it.url || null,
+      status: it.status,
+      added_at: it.added_at || null,
+      note: it.note || null,
+      notes: it.note ? [{ text: it.note }] : [],
+      address: l.address != null ? l.address : null,
+      lat: l.lat != null ? l.lat : null,
+      lon: l.lon != null ? l.lon : null,
+      price: l.price != null ? l.price : null,
+      total_area_m2: l.total_area != null ? l.total_area : null,
+      rooms: l.rooms != null ? l.rooms : null,
+      floor: l.floor != null ? l.floor : null,
+      total_floors: l.floors_count != null ? l.floors_count : null,
+      housing_type: l.housing_type != null ? l.housing_type : null,
+      year_built: l.build_year != null ? l.build_year : null,
+      listing: l
+    };
+  });
+  return { schema_version: 1, exported_at: new Date().toISOString(), source: "mbflat-notebook", properties: props };
+}
+function doExport() {
+  var data = exportObject();
+  var blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  var d = new Date();
+  var stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, "0") + String(d.getDate()).padStart(2, "0");
+  a.href = url;
+  a.download = "mbflat_shortlist_" + stamp + ".json";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 3000);
+  toast("Экспортировано " + state.shortlist.items.length + " шт.", "ok");
+}
+
+function stableNumericId(str) {
+  // детерминированный числовой id для карточек без cian_id (uuid из локального приложения)
+  var h = 0;
+  for (var i = 0; i < str.length; i++) { h = (h * 31 + str.charCodeAt(i)) >>> 0; }
+  return 100000000 + (h % 900000000);
+}
+function buildListingFromProp(prop, key) {
+  return {
+    id: key,
+    url: prop.url || null,
+    price: prop.price != null ? prop.price : null,
+    total_area: prop.total_area_m2 != null ? prop.total_area_m2 : null,
+    price_m2: null,
+    rooms: prop.rooms != null ? prop.rooms : null,
+    floor: prop.floor != null ? prop.floor : null,
+    floors_count: prop.total_floors != null ? prop.total_floors : null,
+    housing_type: prop.housing_type != null ? prop.housing_type : null,
+    district: null,
+    rooms_label: prop.rooms != null ? prop.rooms + " комн." : null,
+    address: prop.address != null ? prop.address : null,
+    lat: prop.lat != null ? prop.lat : null,
+    lon: prop.lon != null ? prop.lon : null,
+    build_year: prop.year_built != null ? prop.year_built : null,
+    is_new: null,
+    sold_since: null
+  };
+}
+function importObject(data) {
+  if (!data || data.schema_version !== 1 || !Array.isArray(data.properties)) {
+    throw new Error("Неподдерживаемый формат файла (ожидается schema_version=1).");
+  }
+  var imported = 0, updated = 0;
+  data.properties.forEach(function (prop) {
+    if (!prop || typeof prop !== "object") return;
+    var cian = prop.cian_id != null ? Number(prop.cian_id) : NaN;
+    var pid = prop.id != null ? Number(prop.id) : NaN;
+    var key = isFinite(cian) ? cian : (isFinite(pid) ? pid : stableNumericId(String(prop.id || prop.cian_id || "")));
+    var listing;
+    if (prop.listing && typeof prop.listing === "object" && prop.listing.id != null) {
+      listing = prop.listing;
+      if (listing.id !== key) listing = Object.assign({}, listing, { id: key });
+    } else {
+      listing = buildListingFromProp(prop, key);
+    }
+    var status = normalizeStatus(prop.status);
+    var note = prop.note != null ? String(prop.note) : "";
+    if (!note && Array.isArray(prop.notes) && prop.notes.length && prop.notes[0].text) {
+      note = String(prop.notes[0].text);
+    }
+    var existing = findItem(key);
+    if (existing) {
+      if (prop.status) existing.status = status;
+      if (note) existing.note = note;
+      if (prop.added_at && !existing.added_at) existing.added_at = prop.added_at;
+      if (!existing.listing || !Object.keys(existing.listing).length) existing.listing = listing;
+      updated++;
+    } else {
+      var item = {
+        id: key,
+        url: (listing.url || prop.url || ""),
+        added_at: prop.added_at || new Date().toISOString(),
+        status: status,
+        note: note,
+        listing: listing
+      };
+      state.shortlist.items.push(item);
+      imported++;
+    }
+  });
+  saveShortlist();
+  return { imported: imported, updated: updated };
+}
+function doImportFile(file) {
+  var reader = new FileReader();
+  reader.onload = function () {
+    try {
+      var data = JSON.parse(reader.result);
+      var r = importObject(data);
+      renderCounter(); renderList(); renderMarkerLayer(); renderDetail();
+      toast("Импорт: добавлено " + r.imported + ", обновлено " + r.updated, "ok");
+    } catch (e) {
+      toast("Импорт не удался: " + e.message, "error");
+    }
+  };
+  reader.onerror = function () { toast("Не удалось прочитать файл.", "error"); };
+  reader.readAsText(file, "utf-8");
+}
+
+/* ============================== #cid handling ============================== */
+function handleHash() {
+  var m = /(?:^|[#&])cid=(\d+)/.exec(location.hash);
+  if (!m) return;
+  var id = Number(m[1]);
+  var existing = findItem(id);
+  if (existing) { selectItem(id, true); return; }
+  state.preview = null;
+  renderDetail();
+  loadListingsFull().then(function (d) {
+    if (!d || !Array.isArray(d.listings)) { showCidNotFound(id); return; }
+    var found = null;
+    for (var i = 0; i < d.listings.length; i++) {
+      if (Number(d.listings[i].id) === id) { found = d.listings[i]; break; }
+    }
+    if (found) {
+      state.preview = found;
+      renderDetail();
+      if (found.lat != null && found.lon != null) map.setView([found.lat, found.lon], 13);
+    } else {
+      showCidNotFound(id);
+    }
+  });
+}
+function showCidNotFound(id) {
+  var el = document.getElementById("detail");
+  el.innerHTML = '<div class="empty"><div class="big">Вариант не найден</div>' +
+    "Вариант #" + esc(id) + " не найден в текущем снимке (снят с публикации или вне выборки).</div>";
+}
+
+/* ============================== wiring ============================== */
+document.getElementById("btnExport").onclick = doExport;
+document.getElementById("btnImport").onclick = function () { document.getElementById("importInput").click(); };
+document.getElementById("importInput").onchange = function (e) {
+  var f = e.target.files && e.target.files[0];
+  if (f) doImportFile(f);
+  e.target.value = "";
+};
+document.getElementById("modeCar").onclick = function () { setMode("car"); };
+document.getElementById("modePt").onclick = function () { setMode("pt"); };
+document.getElementById("chkZones").onchange = function (e) {
+  if (!layerZones) return;
+  if (e.target.checked) layerZones.addTo(map); else map.removeLayer(layerZones);
+};
+document.getElementById("chkSchools").onchange = function (e) {
+  if (!layerSchools) return;
+  if (e.target.checked) layerSchools.addTo(map); else map.removeLayer(layerSchools);
+};
+document.getElementById("chkMarkers").onchange = function (e) {
+  if (!layerMarkers) return;
+  if (e.target.checked) layerMarkers.addTo(map); else map.removeLayer(layerMarkers);
+};
+
+function setMode(m) {
+  state.mode = m;
+  document.getElementById("modeCar").classList.toggle("active", m === "car");
+  document.getElementById("modePt").classList.toggle("active", m === "pt");
+  renderZoneLayer();
+  renderDetail(); // refresh zone block in open card
+}
+
+/* ============================== init ============================== */
+function init() {
+  state.shortlist = loadShortlist();
+  map = L.map("map", { zoomControl: true }).setView(MOSCOW_CENTER, 11);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+  }).addTo(map);
+
+  // create layers first so checkboxes can toggle them
+  layerZones = L.layerGroup().addTo(map);
+  layerSchools = L.layerGroup().addTo(map);
+  layerMarkers = L.layerGroup().addTo(map);
+
+  loadZones();
+  loadSchools();
+  renderCounter();
+  renderList();
+  renderMarkerLayer();
+  renderDetail();
+  handleHash();
+}
+
+document.addEventListener("DOMContentLoaded", init);
+
+/* тестовый доступ */
+window.__mbflat = {
+  state: state, addItem: addItem, removeItem: removeItem, updateItem: updateItem,
+  zonesHits: zonesHits, pointInPoly: pointInPoly, openCian: openCian,
+  exportObject: exportObject, importObject: importObject, normalizeStatus: normalizeStatus,
+  loadShortlist: loadShortlist, saveShortlist: saveShortlist,
+  buildListingFromProp: buildListingFromProp
+};
+</script>
+</body>
+</html>
