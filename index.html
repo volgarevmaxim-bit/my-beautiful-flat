@@ -39,6 +39,8 @@ select {
 }
 .chk { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; padding-bottom: 6px; user-select: none; }
 .chk input { accent-color: var(--warm); }
+.chk-row { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.chk-row .chk { padding-bottom: 0; }
 .kpis { display: flex; flex-wrap: wrap; gap: 10px; margin: 4px 0 12px; }
 .kpi {
   background: var(--card); border: 1px solid var(--line); border-radius: 8px;
@@ -124,9 +126,9 @@ footer a { color: var(--warm); }
       <option value="новостройка">новостройки</option>
     </select>
   </div>
-  <div class="fgroup">
-    <label>Район</label>
-    <select id="fDistrict"><option value="">все районы (9)</option></select>
+  <div class="fgroup" style="flex: 1 1 100%;">
+    <label>Районы</label>
+    <div class="chk-row" id="fDistrictBox"></div>
   </div>
   <div class="fgroup">
     <label>Бюджет</label>
@@ -185,7 +187,7 @@ footer a { color: var(--warm); }
   <div class="kpi"><div class="v" id="kCount">—</div><div class="k">точек на графике</div></div>
   <div class="kpi"><div class="v" id="kMedM2">—</div><div class="k">медиана ₽/м²</div></div>
   <div class="kpi"><div class="v" id="kMedPrice">—</div><div class="k">медиана цены</div></div>
-  <div class="kpi"><div class="v" id="kDev">—</div><div class="k">медианное отклонение от IRN (вторичка)</div></div>
+  <div class="kpi"><div class="v" id="kDev">—</div><div class="k">Δ медианы от IRN (вторичка)</div></div>
   <div class="kpi" id="kCleanBox" style="display:none"><div class="v" id="kClean">—</div><div class="k">убрано выбросов</div></div>
 </section>
 
@@ -263,6 +265,26 @@ function shortlistCount() {
   return n;
 }
 
+function getNoSet() {
+  // id со статусом «не нравится» (no) из шорт-листа — полая серая точка.
+  try {
+    const raw = localStorage.getItem(SHORTLIST_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    const items = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.items) ? parsed.items : []);
+    const s = new Set();
+    for (const it of items) if (it && it.id != null && it.status === "no") s.add(String(it.id));
+    return s;
+  } catch (e) { return new Set(); }
+}
+
+function getDistrictSet() {
+  const s = new Set();
+  const box = document.getElementById("fDistrictBox");
+  if (box) box.querySelectorAll("input[type=checkbox]:checked").forEach(cb => s.add(cb.value));
+  return s;
+}
+
 function openCian(url) {
   if (!url) return;
   if (navigator.userAgent.indexOf("Firefox") !== -1) {
@@ -332,11 +354,15 @@ function openCard(o) {
 }
 
 function init() {
-  const sel = document.getElementById("fDistrict");
+  const dbox = document.getElementById("fDistrictBox");
   for (const d of DISTRICTS) {
-    const o = document.createElement("option");
-    o.value = d; o.textContent = d;
-    sel.appendChild(o);
+    const lbl = document.createElement("label");
+    lbl.className = "chk";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.value = d;
+    lbl.appendChild(cb);
+    lbl.appendChild(document.createTextNode(" " + d));
+    dbox.appendChild(lbl);
   }
   const leg = document.getElementById("legend");
   leg.innerHTML = "";
@@ -345,8 +371,9 @@ function init() {
     'Снапшот: <b>' + (DATA.snapshot_date || "—") + '</b> · объявлений в выборке: <b>' +
     (DATA.stats ? DATA.stats.count : DATA.listings.length) + '</b> · данные: <a href="https://www.cian.ru/" target="_blank">cian.ru</a> · оценка: <a href="https://www.irn.ru/price/" target="_blank">irn.ru/price</a> (вторичный рынок, цены по районам' + irnPeriod + '; первичка по районам у IRN не публикуется)<br>' +
     'Отклонение от IRN — ориентир, а не приговор: выборка 3–6-комнатных квартир дороже среднего по району, который IRN считает по всем комнатностям. Не является инвестиционной рекомендацией.';
-  ["fRooms","fType","fDistrict","fBand","fAge","fClean","fIrn","fColor","fShort","fShortOnly"].forEach(id =>
+  ["fRooms","fType","fBand","fAge","fClean","fIrn","fColor","fShort","fShortOnly"].forEach(id =>
     document.getElementById(id).addEventListener("change", render));
+  document.getElementById("fDistrictBox").addEventListener("change", render);
   window.addEventListener("storage", e => { if (e.key === SHORTLIST_KEY) render(); });
   document.getElementById("fAxisX").addEventListener("change", () => axisSync("x"));
   document.getElementById("fAxisY").addEventListener("change", () => axisSync("y"));
@@ -358,7 +385,8 @@ function init() {
 let searchTarget = null;
 
 function resetFilters() {
-  ["fRooms","fType","fDistrict","fBand","fAge"].forEach(id => document.getElementById(id).value = "");
+  ["fRooms","fType","fBand","fAge"].forEach(id => document.getElementById(id).value = "");
+  document.querySelectorAll("#fDistrictBox input[type=checkbox]").forEach(cb => cb.checked = false);
   document.getElementById("fClean").checked = true;
   document.getElementById("fIrn").checked = false;
 }
@@ -400,15 +428,15 @@ function axisSync(changed) {
 function applyFilters(shortOnly, shortSet) {
   const fRooms = document.getElementById("fRooms").value;
   const fType = document.getElementById("fType").value;
-  const fDist = document.getElementById("fDistrict").value;
+  const distSet = getDistrictSet();
   const fBand = document.getElementById("fBand").value;
   const fAge = parseInt(document.getElementById("fAge").value || "0", 10);
   const fClean = document.getElementById("fClean").checked;
 
-  let rows = DATA.listings.filter(o => {
+  const selected = DATA.listings.filter(o => {
     if (fRooms && o.rooms_group !== fRooms) return false;
     if (fType && o.housing_type !== fType) return false;
-    if (fDist && o.district !== fDist) return false;
+    if (distSet.size && !distSet.has(o.district)) return false;
     if (fBand && o.band_label !== fBand) return false;
     if (fAge === 1) { if (!o.is_new) return false; }
     else if (fAge && (o.days_since == null || o.days_since > fAge)) return false;
@@ -416,36 +444,45 @@ function applyFilters(shortOnly, shortSet) {
     return true;
   });
 
+  const selectedIds = new Set(selected.map(o => String(o.id)));
+
+  // 3σ-очистка — чистка ДАННЫХ, а не селектор: выбросы и доли удаляются
+  // совсем; всё остальное остаётся на графике (dim = не выбрано).
   let removed = 0;
+  let allRows = DATA.listings;
   if (fClean) {
-    const cleanSrc = rows.filter(o => o.price_m2 != null && o.share_amount == null);
+    const cleanSrc = DATA.listings.filter(o => o.price_m2 != null && o.share_amount == null);
     const vals = cleanSrc.map(o => o.price_m2);
     const m = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
     const s = std(vals);
-    const kept = [];
-    for (const o of rows) {
+    const keptAll = [];
+    for (const o of allRows) {
       if (o.share_amount != null) { removed++; continue; }
       if (o.price_m2 != null && s > 0 && Math.abs(o.price_m2 - m) > 3*s) { removed++; continue; }
-      kept.push(o);
+      keptAll.push(o);
     }
-    rows = kept;
+    allRows = keptAll;
   }
-  return { rows, removed };
+
+  const rows = allRows.filter(o => selectedIds.has(String(o.id)));
+  return { rows, removed, allRows, selectedIds };
 }
 
 function render() {
   const fShort = document.getElementById("fShort").checked;
   const fShortOnly = document.getElementById("fShortOnly").checked;
   const shortSet = getShortlistSet();
+  const noSet = getNoSet();
   document.getElementById("fShortCnt").textContent = shortlistCount();
   document.getElementById("fShortOnlyWrap").style.display = fShort ? "" : "none";
   if (!fShort) document.getElementById("fShortOnly").checked = false;
   document.getElementById("shortHint").textContent =
     (fShort && shortSet.size === 0) ? "Шорт-лист пуст — добавляйте варианты в блокноте" : "";
-  const { rows, removed } = applyFilters(fShortOnly, shortSet);
+  const { rows, removed, allRows, selectedIds } = applyFilters(fShortOnly, shortSet);
   const withM2 = rows.filter(o => o.price_m2 != null);
   document.getElementById("kCount").textContent = rows.length.toLocaleString("ru-RU");
-  document.getElementById("kMedM2").textContent = fmtM2(median(withM2.map(o => o.price_m2)));
+  const medM2 = median(withM2.map(o => o.price_m2));
+  document.getElementById("kMedM2").textContent = (medM2 == null) ? "—" : Math.round(medM2 / 1000) + " тыс. ₽/м²";
   document.getElementById("kMedPrice").textContent = fmtMln(median(rows.filter(o => o.price != null).map(o => o.price)));
   const devs = rows.filter(o => o.dev_pct != null).map(o => o.dev_pct);
   document.getElementById("kDev").textContent = fmtPct(median(devs));
@@ -475,7 +512,8 @@ function render() {
 
   const xOf = o => axX === "area" ? o.total_area : o.price / 1e6;
   const yOf = o => axY === "price" ? o.price / 1e6 : o.price_m2 / 1000;
-  let pts = withM2.map(o => ({ o, x: xOf(o), y: yOf(o) }));
+  const allWithM2 = allRows.filter(o => o.price_m2 != null);
+  let pts = allWithM2.map(o => ({ o, x: xOf(o), y: yOf(o), dim: !selectedIds.has(String(o.id)) }));
   if (axX === "area") pts = pts.filter(p => p.x != null);
   if (axY === "price") pts = pts.filter(p => p.y != null);
 
@@ -503,9 +541,30 @@ function render() {
         label: k,
         baseColor: color,
         data: [],
-        backgroundColor: pt => (pt.raw && pt.raw.o && pt.raw.o.sold_since) ? "rgba(255,255,255,0.02)" : color,
-        borderColor: pt => (pt.raw && pt.raw.o && pt.raw.o.sold_since) ? color : "rgba(0,0,0,0)",
-        borderWidth: pt => (pt.raw && pt.raw.o && pt.raw.o.sold_since) ? 2 : 0,
+        backgroundColor: pt => {
+          const o = pt.raw && pt.raw.o;
+          if (!o) return color;
+          if (pt.raw.dim) return "rgba(150,150,150,0.30)";
+          if (noSet.has(String(o.id))) return "rgba(255,255,255,0.02)";
+          if (o.sold_since) return "rgba(255,255,255,0.02)";
+          return color;
+        },
+        borderColor: pt => {
+          const o = pt.raw && pt.raw.o;
+          if (!o) return "rgba(0,0,0,0)";
+          if (pt.raw.dim) return "rgba(120,120,120,0.4)";
+          if (noSet.has(String(o.id))) return "#9E9E9E";
+          if (o.sold_since) return color;
+          return "rgba(0,0,0,0)";
+        },
+        borderWidth: pt => {
+          const o = pt.raw && pt.raw.o;
+          if (!o) return 0;
+          if (pt.raw.dim) return 1;
+          if (noSet.has(String(o.id))) return 2;
+          if (o.sold_since) return 2;
+          return 0;
+        },
         pointRadius: 5,
         pointHoverRadius: 8,
         pointStyle: (colMode === "type" && k === "новостройка") ? "triangle" : "circle",
@@ -537,7 +596,7 @@ function render() {
 
   // Оверлей «Шорт-лист» — кольцо поверх точек из блокнота
   if (fShort && shortSet.size) {
-    const sl = pts.filter(p => shortSet.has(String(p.o.id)));
+    const sl = pts.filter(p => !p.dim && shortSet.has(String(p.o.id)));
     if (sl.length) {
       datasets.push({
         label: "Шорт-лист",
@@ -554,14 +613,14 @@ function render() {
   }
 
   const fIrn = document.getElementById("fIrn").checked;
-  const fDist = document.getElementById("fDistrict").value;
+  const distSet = getDistrictSet();
   const hint = document.getElementById("irnHint");
   hint.textContent = "";
   if (fIrn && DATA.irn) {
     if (axY !== "m2") {
       hint.textContent = "Линии IRN доступны при оси Y «Стоимость м²».";
-    } else if (fDist) {
-      const d = fDist;
+    } else if (distSet.size === 1) {
+      const d = [...distSet][0];
       const xs = pts.map(p => p.x).filter(v => v != null);
       const xmin = xs.length ? Math.min(...xs) : 0;
       const xmax = xs.length ? Math.max(...xs) : 60;
@@ -600,8 +659,13 @@ function render() {
     const icon = d.pointStyle === "triangle"
       ? '<span class="tri" style="border-bottom-color:' + base + '"></span>'
       : '<span class="dot" style="background:' + base + '"></span>';
-    return '<span class="chip">' + icon + d.label + ' · ' + d.data.length + '</span>';
+    const selCount = (d.data || []).filter(p => !(p && p.dim)).length;
+    return '<span class="chip">' + icon + d.label + ' · ' + selCount + '</span>';
   }).join("");
+  const noCount = pts.filter(p => !p.dim && noSet.has(String(p.o.id))).length;
+  if (noCount) {
+    leg.innerHTML += '<span class="chip"><span class="dot" style="background:transparent; border:2px solid #9E9E9E; box-sizing:border-box;"></span>не нравится · ' + noCount + '</span>';
+  }
   if (rows.some(o => o.sold_since)) {
     leg.innerHTML += '<span class="chip"><span class="dot" style="background:transparent; border:2px solid #888; box-sizing:border-box;"></span>снято с публикации (продано?)</span>';
   }

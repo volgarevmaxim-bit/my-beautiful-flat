@@ -1,12 +1,13 @@
 @echo off
 rem ------------------------------------------------------------
 rem  open_in_firefox.bat
-rem  Handler for the custom myflat: URL protocol (registered
-rem  under HKCU, no admin required). See register_firefox_handler.bat
+rem  Handler for the myflat: URL protocol. Launched HIDDEN via
+rem  open_in_firefox.vbs (wscript), so no console window flashes.
 rem  Usage: open_in_firefox.bat "myflat:https://www.cian.ru/sale/flat/123/"
 rem  1) Strip the myflat: prefix.
-rem  2) Validate: URL must start with https:// and contain cian.ru.
-rem     Arbitrary schemes / URLs are never executed.
+rem  2) Validate in pure batch (NO PowerShell): scheme must be
+rem     https:// and the host must be www.cian.ru / cian.ru / *.cian.ru.
+rem     Anything else is never opened.
 rem  3) Open in Firefox if installed, otherwise in the default browser.
 rem ------------------------------------------------------------
 setlocal EnableExtensions
@@ -14,18 +15,25 @@ setlocal EnableExtensions
 set "ARG=%~1"
 if not defined ARG exit /b 1
 
-rem Strip the myflat: prefix (case-insensitive).
-if /i "%ARG:~0,7%"=="myflat:" (
-    set "URL=%ARG:~7%"
-) else (
-    set "URL=%ARG%"
-)
+set "URL=%ARG%"
+if /i "%URL:~0,7%"=="myflat:" set "URL=%URL:~7%"
+if not defined URL exit /b 1
 
-rem Validate via environment variable to avoid cmd metacharacter
-rem injection (the URL never appears as raw text on a command line).
-set "MBFLAT_URL=%URL%"
-powershell -NoProfile -Command "if(-not $env:MBFLAT_URL.ToLower().StartsWith('https://') -or -not $env:MBFLAT_URL.ToLower().Contains('cian.ru')){exit 1}"
-if errorlevel 1 exit /b 1
+rem 1) Scheme check (substring compare, no metacharacter expansion).
+if /i not "%URL:~0,8%"=="https://" exit /b 1
+
+rem 2) Host check: strip https://, take the host up to the first "/".
+rem    for /f keeps the value quoted, so & and other metacharacters
+rem    inside the URL stay literal.
+set "REST=%URL:~8%"
+set "HOST="
+for /f "delims=/" %%H in ("%REST%") do set "HOST=%%H"
+if not defined HOST exit /b 1
+set "OK="
+if /i "%HOST%"=="www.cian.ru" set OK=1
+if /i "%HOST%"=="cian.ru" set OK=1
+if not defined OK if /i "%HOST:~-8%"==".cian.ru" set OK=1
+if not defined OK exit /b 1
 
 rem Locate firefox.exe across common install paths.
 set "FF="

@@ -132,6 +132,7 @@ a { color: var(--accent); }
 .btn-row .btn.danger { color: var(--danger); border-color: #f5c6c0; }
 .btn-row .btn:hover { filter: brightness(0.96); }
 .btn-row .btn.small { font-size: 12px; padding: 5px 8px; }
+.btn-row .btn.active { background: #efefef; border-color: #9e9e9e; color: #424242; font-weight: 600; }
 .field-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
 .field-row label { color: var(--muted); min-width: 62px; }
 .field-row select { flex: 1; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
@@ -206,7 +207,8 @@ var STATUSES = [
   { key: "visit",      label: "Смотреть",        color: "#27ae60" },
   { key: "negotiate",  label: "Обсуждать цену",  color: "#8e44ad" },
   { key: "deal_check", label: "Проверка сделки", color: "#c0392b" },
-  { key: "rejected",   label: "Отказ",           color: "#95a5a6" }
+  { key: "rejected",   label: "Отказ",           color: "#95a5a6" },
+  { key: "no",         label: "Не нравится",     color: "#9E9E9E" }
 ];
 var STATUS_BY_KEY = {};
 var STATUS_LABEL = {};
@@ -711,6 +713,7 @@ function renderDetail() {
       zoneBlockHtml(l.lat, l.lon) +
       '<div class="btn-row">' +
       '<button class="btn primary" id="btnKeep">Оставить в шорт-листе</button>' +
+      '<button class="btn" id="btnNo">Смотрел, не нравится</button>' +
       '<button class="btn" id="btnOpenCian">Открыть на Циане</button>' +
       '<a class="btn small" id="btnDefault" href="#" target="_blank">в браузере по умолчанию</a>' +
       "</div>";
@@ -720,6 +723,13 @@ function renderDetail() {
       renderMarkerLayer();
       selectItem(item.id, false);
       toast("Добавлено в шорт-лист", "ok");
+    };
+    document.getElementById("btnNo").onclick = function () {
+      var item = addItem(l, { url: l.url, status: "no" });
+      renderCounter();
+      renderMarkerLayer();
+      selectItem(item.id, false);
+      toast("Статус: Не нравится");
     };
     document.getElementById("btnOpenCian").onclick = function () { openCian(l.url); };
     document.getElementById("btnDefault").href = l.url || "#";
@@ -752,6 +762,7 @@ function renderDetail() {
     '<div class="btn-row">' +
     '<button class="btn" id="btnOpenCian">Открыть на Циане</button>' +
     '<a class="btn small" id="btnDefault" href="#" target="_blank">в браузере по умолчанию</a>' +
+    '<button class="btn' + (it.status === "no" ? " active" : "") + '" id="btnNo">Смотрел, не нравится</button>' +
     '<button class="btn danger" id="btnRemove">Убрать из шорт-листа</button>' +
     "</div>";
 
@@ -768,6 +779,14 @@ function renderDetail() {
     noteTimer = setTimeout(function () { updateItem(it.id, { note: val }); }, 350);
   });
   document.getElementById("btnOpenCian").onclick = function () { openCian(ll.url || it.url); };
+  document.getElementById("btnNo").onclick = function () {
+    var next = it.status === "no" ? "new" : "no";
+    updateItem(it.id, { status: next });
+    renderList();
+    renderMarkerLayer();
+    renderDetail();
+    toast("Статус: " + STATUS_LABEL[next]);
+  };
   document.getElementById("btnRemove").onclick = function () {
     removeItem(it.id);
     state.selectedId = null;
