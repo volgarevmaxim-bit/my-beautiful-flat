@@ -84,6 +84,8 @@ footer a { color: var(--warm); }
 .cbtn { font-size: 0.9rem; padding: 9px 16px; border-radius: 8px; cursor: pointer; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
 .cbtn-main { background: var(--warm); color: #fff; border-color: var(--warm); }
 .cbtn:hover { opacity: 0.9; }
+.hbtn { display: inline-block; margin-left: 14px; font-size: 0.85rem; font-weight: 600; padding: 6px 14px; border-radius: 999px; background: var(--warm); color: #fff; text-decoration: none; vertical-align: middle; }
+.hbtn:hover { opacity: 0.9; }
 .calt { margin-top: 10px; font-size: 0.8rem; }
 .calt a { color: var(--muted); text-decoration: underline; }
 @media (max-width: 640px) {
@@ -93,7 +95,7 @@ footer a { color: var(--warm); }
 </head>
 <body>
 
-<h1>Моя красивая квартира</h1>
+<h1>Моя красивая квартира <a class="hbtn" href="notebook/index.html">К шорт-листу →</a></h1>
 <div class="sub">Оси настраиваются: X — цена квартиры или площадь · Y — стоимость м² или цена. Предложения ЦИАН, ориентиры IRN.ru</div>
 
 <section class="filters">
@@ -169,7 +171,7 @@ footer a { color: var(--warm); }
       <option value="quart">по квартилю IRN</option>
     </select>
   </div>
-  <label class="chk"><input type="checkbox" id="fClean"> Очистить (3σ + доли)</label>
+  <label class="chk"><input type="checkbox" id="fClean" checked> Очистить (3σ + доли)</label>
   <label class="chk"><input type="checkbox" id="fIrn"> Линии IRN</label>
   <label class="chk" title="Подсветить варианты из блокнота (шорт-лист)">
     <input type="checkbox" id="fShort"> Шорт-лист <span class="cnt" id="fShortCnt">0</span>
@@ -357,7 +359,7 @@ let searchTarget = null;
 
 function resetFilters() {
   ["fRooms","fType","fDistrict","fBand","fAge"].forEach(id => document.getElementById(id).value = "");
-  document.getElementById("fClean").checked = false;
+  document.getElementById("fClean").checked = true;
   document.getElementById("fIrn").checked = false;
 }
 
@@ -499,20 +501,18 @@ function render() {
       else color = (k === "вторичка") ? C_SEC : C_NEW;
       cats.set(k, {
         label: k,
+        baseColor: color,
         data: [],
-        backgroundColor: color,
+        backgroundColor: pt => (pt.raw && pt.raw.o && pt.raw.o.sold_since) ? "rgba(255,255,255,0.02)" : color,
+        borderColor: pt => (pt.raw && pt.raw.o && pt.raw.o.sold_since) ? color : "rgba(0,0,0,0)",
+        borderWidth: pt => (pt.raw && pt.raw.o && pt.raw.o.sold_since) ? 2 : 0,
         pointRadius: 5,
         pointHoverRadius: 8,
         pointStyle: (colMode === "type" && k === "новостройка") ? "triangle" : "circle",
       });
       order.push(k);
     }
-    const sold = !!p.o.sold_since;
-    cats.get(k).data.push(Object.assign({}, p, {
-      backgroundColor: sold ? "rgba(255,255,255,0.05)" : undefined,
-      borderColor: sold ? cats.get(k).backgroundColor : undefined,
-      borderWidth: sold ? 2 : undefined,
-    }));
+    cats.get(k).data.push(Object.assign({}, p));
   }
   if (colMode === "quart") order.sort((a, b) => QUART_ORDER.indexOf(a) - QUART_ORDER.indexOf(b));
   const datasets = order.map(k => cats.get(k));
@@ -596,9 +596,10 @@ function render() {
   leg.innerHTML = datasets.map(d => {
     if (d.showLine) return '<span class="chip"><span class="irnline"></span>' + d.label + '</span>';
     if (d._shortlist) return '<span class="chip"><span class="dot ring"></span>Шорт-лист · ' + d.data.length + '</span>';
+    const base = d.baseColor || d.backgroundColor;
     const icon = d.pointStyle === "triangle"
-      ? '<span class="tri" style="border-bottom-color:' + d.backgroundColor + '"></span>'
-      : '<span class="dot" style="background:' + d.backgroundColor + '"></span>';
+      ? '<span class="tri" style="border-bottom-color:' + base + '"></span>'
+      : '<span class="dot" style="background:' + base + '"></span>';
     return '<span class="chip">' + icon + d.label + ' · ' + d.data.length + '</span>';
   }).join("");
   if (rows.some(o => o.sold_since)) {

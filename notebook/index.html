@@ -81,6 +81,7 @@ a { color: var(--accent); }
 .seg button.active { background: var(--accent); color: #fff; }
 .ctl-row { display: flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 1px 0; cursor: pointer; }
 .ctl-row input { cursor: pointer; }
+.ctl-note { font-size: 10.5px; color: var(--muted); line-height: 1.4; margin-top: 4px; }
 
 /* ---- sidebar ---- */
 #sidebar {
@@ -170,12 +171,12 @@ textarea#noteInput {
   <div id="mapWrap">
     <div id="map"></div>
     <div id="mapControls">
-      <div class="ctl-title">Режим зон</div>
+      <div class="ctl-title">Режим доступности</div>
       <div class="seg">
         <button id="modeCar" class="active" type="button">Авто</button>
         <button id="modePt" type="button">ОТ</button>
       </div>
-      <label class="ctl-row"><input type="checkbox" id="chkZones" checked> Зоны доступности</label>
+      <div class="ctl-note">Радиусы — приблизительные: 20 мин — зелёный, 40 мин — янтарный; точный список школ — в карточке.</div>
       <label class="ctl-row"><input type="checkbox" id="chkSchools" checked> Школы</label>
       <label class="ctl-row"><input type="checkbox" id="chkMarkers" checked> Шорт-лист</label>
     </div>
@@ -214,7 +215,6 @@ STATUSES.forEach(function (s) { STATUS_BY_KEY[s.key] = s; STATUS_LABEL[s.key] = 
 
 var DISCLAIMER = "Попадание в расчётную зону. Не подтверждённое время поездки; маршрут необходимо проверить отдельно.";
 var MODE_LABEL = { driving: "авто", public_transport: "ОТ" };
-var ZONE_COLOR = { driving: "#1e90ff", public_transport: "#e67e22" };
 var MOSCOW_CENTER = [55.65, 37.55];
 
 /* ============================== state ============================== */
@@ -225,13 +225,15 @@ var state = {
   zones: { car: null, pt: null },
   schools: [],                  // selected==1 rows
   selectedId: null,             // id of open shortlist item (number)
-  preview: null                 // {listing} for #cid not yet in shortlist
+  preview: null,                // {listing} for #cid not yet in shortlist
+  zoneRadii: null               // {car:{20:m,40:m}, pt:{20:m,40:m}} — computed once zones+schools loaded
 };
 
 var map = null;
-var layerZones = null;
 var layerSchools = null;
 var layerMarkers = null;
+var layerRadius = null;
+var layerPreview = null;
 
 /* ============================== localStorage ============================== */
 function loadShortlist() {
@@ -386,7 +388,7 @@ function zonesHits(lat, lon) {
       var sid = pr.school_id;
       var mn = Number(pr.min);
       if (!(sid in bySchool) || mn < bySchool[sid].min) {
-        bySchool[sid] = { name: pr.name, min: mn };
+        bySchool[sid] = { school_id: sid, name: pr.name, min: mn };
       }
     }
   }
@@ -425,7 +427,7 @@ function loadZones() {
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(function (d) { state.zones[m] = d; })
       .catch(function () { failed = true; })
-      .then(function () { if (--pending === 0) { renderZoneLayer(); renderDetail(); if (failed) setBanner("Часть данных зон не загрузилась — карта доступности может быть неполной."); } });
+      .then(function () { if (--pending === 0) { maybeComputeRadii(); renderDetail(); if (failed) setBanner("Часть данных зон не загрузилась — карта доступности может быть неполной."); } });
   });
 }
 function loadSchools() {
@@ -443,6 +445,7 @@ function loadSchools() {
         if (String(rec.selected).trim() === "1") state.schools.push(rec);
       }
       renderSchoolLayer();
+      maybeComputeRadii();
     })
     .catch(function () { setBanner("Не удалось загрузить список школ."); });
 }
@@ -455,20 +458,128 @@ function loadListingsFull() {
 }
 
 /* ============================== map layers ============================== */
-function renderZoneLayer() {
-  var gc = state.zones[state.mode];
-  if (!layerZones) layerZones = L.layerGroup().addTo(map);
-  layerZones.clearLayers();
-  if (!gc) return;
-  var color = ZONE_COLOR[state.mode === "car" ? "driving" : "public_transport"];
-  var modeKey = state.mode === "car" ? "driving" : "public_transport";
-  L.geoJSON(gc, {
-    style: function () { return { color: color, weight: 1.2, fillColor: color, fillOpacity: 0.15 }; },
-    onEachFeature: function (f, lyr) {
-      var p = f.properties || {};
-      lyr.bindPopup(esc(p.name || p.school_id) + " — " + p.min + " мин (" + MODE_LABEL[modeKey] + ")");
+/* ---- indicative radii (per mode & 20/40 threshold) ---- */
+function computeRadii(gc) {
+  // gc: FeatureCollection. Returns {20: meters|null, 40: meters|null}.
+  // Per school with a feature min==t: max distance from the school point to
+  // the vertices of the OUTER ring (first ring of each MultiPolygon polygon —
+  // holes are smaller thresholds). (mode,t) radius = median across schools.
+  var pos = {};
+  state.schools.forEach(function (s) { pos[s.entity_id] = s; });
+  var res = { 20: null, 40: null };
+  [20, 40].forEach(function (t) {
+    var dists = [];
+    for (var i = 0; i < gc.features.length; i++) {
+      var f = gc.features[i];
+      var pr = f.properties || {};
+      if (Number(pr.min) !== t) continue;
+      var rec = pos[pr.school_id];
+      if (!rec) continue;
+      var slat = parseFloat(rec.lat), slon = parseFloat(rec.lon);
+      if (isNaN(slat) || isNaN(slon)) continue;
+      var g = f.geometry;
+      if (!g || !Array.isArray(g.coordinates)) continue;
+      var maxD = 0;
+      for (var p = 0; p < g.coordinates.length; p++) {
+        var ring = g.coordinates[p][0];
+        if (!ring) continue;
+        for (var v = 0; v < ring.length; v++) {
+          var d = L.latLng(slat, slon).distanceTo(L.latLng(ring[v][1], ring[v][0]));
+          if (d > maxD) maxD = d;
+        }
+      }
+      if (maxD > 0) dists.push(maxD);
     }
-  }).addTo(layerZones);
+    if (dists.length) {
+      dists.sort(function (a, b) { return a - b; });
+      var mid = Math.floor(dists.length / 2);
+      res[t] = dists.length % 2 ? dists[mid] : (dists[mid - 1] + dists[mid]) / 2;
+    }
+  });
+  return res;
+}
+
+function maybeComputeRadii() {
+  if (!state.zones.car || !state.zones.pt || !state.schools.length) return;
+  state.zoneRadii = {
+    car: computeRadii(state.zones.car),
+    pt: computeRadii(state.zones.pt)
+  };
+  renderRadiusLayer();
+  // on cold load the #cid selection may have been fitted before zones were ready;
+  // re-fit so the R40 circle is not off-screen (selection only, not preview)
+  if (state.selectedId != null && !state.preview) {
+    var it = findItem(state.selectedId);
+    var l = it && it.listing;
+    if (l && l.lat != null && l.lon != null) fitToPoint(l.lat, l.lon, true);
+  }
+}
+
+function currentPoint() {
+  if (state.preview) {
+    var pl = state.preview;
+    if (pl.lat != null && pl.lon != null) return [pl.lat, pl.lon];
+    return null;
+  }
+  var it = state.selectedId != null ? findItem(state.selectedId) : null;
+  var l = it && it.listing;
+  if (l && l.lat != null && l.lon != null) return [l.lat, l.lon];
+  return null;
+}
+
+function renderPreviewLayer() {
+  if (!layerPreview) layerPreview = L.layerGroup().addTo(map);
+  layerPreview.clearLayers();
+  if (!state.preview) return;
+  var l = state.preview;
+  if (l.lat == null || l.lon == null) return;
+  var latlng = [l.lat, l.lon];
+  L.circleMarker(latlng, { radius: 9, color: "#C89B3C", weight: 3, fillColor: "#C89B3C", fillOpacity: 0.12, className: "mb-preview-marker" })
+    .addTo(layerPreview);
+  L.circleMarker(latlng, { radius: 3, color: "#C89B3C", weight: 1, fillColor: "#C89B3C", fillOpacity: 0.9, className: "mb-preview-marker" })
+    .addTo(layerPreview);
+}
+
+function renderRadiusLayer() {
+  if (!layerRadius) layerRadius = L.layerGroup().addTo(map);
+  layerRadius.clearLayers();
+  var pt = currentPoint();
+  if (!pt) return;
+  var lat = pt[0], lon = pt[1];
+  var radii = state.zoneRadii && state.zoneRadii[state.mode];
+  var mk = state.mode === "car" ? "driving" : "public_transport";
+  if (radii) {
+    if (radii[20] != null) L.circle([lat, lon], { radius: radii[20], color: "#27ae60", weight: 1.5, dashArray: "6,6", fill: false, className: "mb-radius-r20" }).addTo(layerRadius);
+    if (radii[40] != null) L.circle([lat, lon], { radius: radii[40], color: "#f39c12", weight: 1.5, dashArray: "6,6", fill: false, className: "mb-radius-r40" }).addTo(layerRadius);
+  }
+  // color schools by exact zone band of the SELECTED POINT (geometry, not radius)
+  var hits = zonesHits(lat, lon);
+  var bandBySchool = {};
+  for (var i = 0; i < hits.length; i++) bandBySchool[hits[i].school_id] = hits[i].min;
+  state.schools.forEach(function (s) {
+    var slat = parseFloat(s.lat), slon = parseFloat(s.lon);
+    if (isNaN(slat) || isNaN(slon)) return;
+    var mn = bandBySchool[s.entity_id];
+    var color = "#95a5a6", band = "band-out";
+    var label = esc(s.name) + " — вне зон";
+    if (mn != null) {
+      if (mn <= 20) { color = "#27ae60"; band = "band-20"; }
+      else { color = "#f39c12"; band = "band-40"; }
+      label = esc(s.name) + " — " + mn + " мин (" + MODE_LABEL[mk] + ")";
+    }
+    L.circleMarker([slat, slon], { radius: 6, color: "#ffffff", weight: 1.2, fillColor: color, fillOpacity: 0.95, className: "mb-school-band " + band })
+      .bindPopup(label).addTo(layerRadius);
+  });
+}
+
+function fitToPoint(lat, lon, withRadius) {
+  var radii = state.zoneRadii && state.zoneRadii[state.mode];
+  var r40 = radii ? radii[40] : null;
+  var size = (withRadius && r40) ? r40 * 2 : 2500;
+  var maxZoom = withRadius ? 15 : 14;
+  map.whenReady(function () {
+    map.fitBounds(L.latLng(lat, lon).toBounds(size), { padding: [30, 30], maxZoom: maxZoom, animate: false });
+  });
 }
 function renderSchoolLayer() {
   if (!layerSchools) layerSchools = L.layerGroup().addTo(map);
@@ -542,10 +653,12 @@ function selectItem(id, focusMap) {
   state.selectedId = id;
   renderList();
   renderDetail();
+  renderPreviewLayer();
+  renderRadiusLayer();
   if (focusMap) {
     var it = findItem(id);
     var l = it && it.listing;
-    if (l && l.lat != null && l.lon != null) map.setView([l.lat, l.lon], Math.max(map.getZoom(), 13));
+    if (l && l.lat != null && l.lon != null) fitToPoint(l.lat, l.lon, true);
   }
 }
 
@@ -813,7 +926,9 @@ function handleHash() {
     if (found) {
       state.preview = found;
       renderDetail();
-      if (found.lat != null && found.lon != null) map.setView([found.lat, found.lon], 13);
+      renderPreviewLayer();
+      renderRadiusLayer();
+      if (found.lat != null && found.lon != null) fitToPoint(found.lat, found.lon, false);
     } else {
       showCidNotFound(id);
     }
@@ -835,10 +950,6 @@ document.getElementById("importInput").onchange = function (e) {
 };
 document.getElementById("modeCar").onclick = function () { setMode("car"); };
 document.getElementById("modePt").onclick = function () { setMode("pt"); };
-document.getElementById("chkZones").onchange = function (e) {
-  if (!layerZones) return;
-  if (e.target.checked) layerZones.addTo(map); else map.removeLayer(layerZones);
-};
 document.getElementById("chkSchools").onchange = function (e) {
   if (!layerSchools) return;
   if (e.target.checked) layerSchools.addTo(map); else map.removeLayer(layerSchools);
@@ -852,7 +963,7 @@ function setMode(m) {
   state.mode = m;
   document.getElementById("modeCar").classList.toggle("active", m === "car");
   document.getElementById("modePt").classList.toggle("active", m === "pt");
-  renderZoneLayer();
+  renderRadiusLayer();
   renderDetail(); // refresh zone block in open card
 }
 
@@ -866,9 +977,10 @@ function init() {
   }).addTo(map);
 
   // create layers first so checkboxes can toggle them
-  layerZones = L.layerGroup().addTo(map);
   layerSchools = L.layerGroup().addTo(map);
+  layerRadius = L.layerGroup().addTo(map);
   layerMarkers = L.layerGroup().addTo(map);
+  layerPreview = L.layerGroup().addTo(map);
 
   loadZones();
   loadSchools();
@@ -887,7 +999,9 @@ window.__mbflat = {
   zonesHits: zonesHits, pointInPoly: pointInPoly, openCian: openCian,
   exportObject: exportObject, importObject: importObject, normalizeStatus: normalizeStatus,
   loadShortlist: loadShortlist, saveShortlist: saveShortlist,
-  buildListingFromProp: buildListingFromProp
+  buildListingFromProp: buildListingFromProp,
+  computeRadii: computeRadii, renderRadiusLayer: renderRadiusLayer,
+  renderPreviewLayer: renderPreviewLayer, currentPoint: currentPoint
 };
 </script>
 </body>
