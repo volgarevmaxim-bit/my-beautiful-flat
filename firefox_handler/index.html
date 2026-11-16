@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Firefox-обработчик для «Моей красивой квартиры»</title>
+<style>
+  body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 720px;
+         margin: 2rem auto; padding: 0 1rem; color: #2b2b2b; }
+  h1 { font-size: 1.5rem; }
+  code { background: #f3ede7; padding: 2px 6px; border-radius: 4px; }
+  .card { border: 1px solid #e4d9cd; border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0;
+          background: #fbf7f2; }
+  .btn { display: inline-block; margin: 0.35rem 0.5rem 0.35rem 0; padding: 0.6rem 1rem;
+         border: 1px solid #20808d; border-radius: 6px; background: #20808d; color: #fff;
+         text-decoration: none; }
+  .btn:hover { background: #196a75; }
+  .muted { color: #7a6f63; font-size: 0.92rem; }
+  ol li { margin-bottom: 0.6rem; }
+</style>
+</head>
+<body>
+<h1>Firefox-обработчик для «Моей красивой квартиры»</h1>
+<p>Кнопка «Открыть на Циане» на графике цен и в блокноте сначала пробует открыть
+объявление в Firefox, а если это невозможно — в браузере по умолчанию. Для этого
+нужен разовый обработчик протокола <code>myflat:</code>. Установка не требует прав
+администратора.</p>
+
+<div class="card">
+<ol>
+  <li>Скачайте оба файла в <b>один и тот же каталог</b>:
+    <br>
+    <a class="btn" href="open_in_firefox.bat" download>open_in_firefox.bat</a>
+    <a class="btn" href="register_firefox_handler.bat" download>register_firefox_handler.bat</a>
+  </li>
+  <li>Запустите <code>register_firefox_handler.bat</code> двойным кликом
+    (если Windows спросит — разрешите запуск).</li>
+  <li>Проверьте: нажмите «Открыть на Циане» в карточке варианта на
+    <a href="../index.html">графике цен</a>.</li>
+</ol>
+<p class="muted">Если Firefox не установлен — ссылка откроется в браузере по
+умолчанию. Не перемещайте и не удаляйте каталог с bat-файлами после установки;
+если переместили — запустите register_firefox_handler.bat заново из нового места.</p>
+</div>
+
+<p class="muted">Обработчик открывает только ссылки ЦИАН (https://…cian.ru/…),
+прочие адреса игнорирует. Пока обработчик не установлен, кнопка «Открыть на
+Циане» честно открывает браузер по умолчанию.</p>
+</body>
+</html>
