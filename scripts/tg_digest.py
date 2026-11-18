@@ -146,7 +146,7 @@ def main():
              f"Закрепите это сообщение.")
         state["welcome_sent"] = True
         state["chat_id"] = chat_id
-        save_state(st)
+        save_state(state)
         print("welcome sent")
 
     if not os.path.exists(LISTINGS):
@@ -185,7 +185,7 @@ def main():
         send(token, chat_id, "\n".join(lines))
 
     state["last_digest_date"] = snap
-    save_state(st)
+    save_state(state)
     print("digest done")
 
 
