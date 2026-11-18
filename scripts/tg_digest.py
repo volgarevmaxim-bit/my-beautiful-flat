@@ -153,7 +153,8 @@ def main():
         sys.exit(f"FAIL: нет {LISTINGS}")
     data = json.load(open(LISTINGS, encoding="utf-8"))
     fresh = data.get("fresh") or []
-    sold = data.get("sold_ids") or []
+    sold = data.get("sold_today") or []
+    sold_total = data.get("sold_total")
     snap = data.get("snapshot_date") or "—"
 
     if state.get("last_digest_date") == snap:
@@ -163,7 +164,8 @@ def main():
     if not fresh and not sold:
         send(token, chat_id,
              f"Радар: новых объявлений и снятий за {snap} нет "
-             f"(всего в выборке {data.get('total')}).")
+             f"(всего в выборке {data.get('total')}, "
+             f"пустых точек «снято» накопилось {sold_total or 0}).")
     else:
         lines = [f"Свежие объявления ЦИАН ({len(fresh)}) · снапшот {snap}"]
         for o in fresh[:15]:
@@ -180,7 +182,7 @@ def main():
         if len(fresh) > 15:
             lines.append(f"… и ещё {len(fresh) - 15}: {DASH_URL} (фильтр «сегодня»)")
         if sold:
-            lines.append(f"\nСнято с публикации (возможно, проданы): {len(sold)}. "
+            lines.append(f"\nСнято с публикации сегодня (возможно, проданы): {len(sold)}. "
                          f"На графике — пустые точки.")
         send(token, chat_id, "\n".join(lines))
 
