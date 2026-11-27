@@ -96,6 +96,11 @@ a { color: var(--accent); }
 #listPanel { flex: 0 0 auto; max-height: 42%; display: flex; flex-direction: column; border-bottom: 1px solid var(--border); }
 .panel-head { padding: 8px 14px; font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
 #list { overflow-y: auto; min-height: 0; }
+.url-form { display: flex; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+.url-form input { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12.5px; }
+.url-form button { padding: 6px 10px; border: 1px solid var(--border); background: var(--panel); border-radius: 6px; cursor: pointer; font-size: 12.5px; color: var(--text); white-space: nowrap; }
+.url-form button:hover { border-color: var(--accent); color: var(--accent); }
+.url-hint { display: none; padding: 4px 14px 6px; font-size: 11px; color: #c0392b; border-bottom: 1px solid var(--border); }
 .list-item {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 14px; border-bottom: 1px solid #f0f2f4; cursor: pointer;
@@ -185,6 +190,11 @@ textarea#noteInput {
   <aside id="sidebar">
     <div id="listPanel">
       <div class="panel-head">Шорт-лист</div>
+      <form id="urlForm" class="url-form" autocomplete="off">
+        <input id="urlInput" type="text" placeholder="https://www.cian.ru/sale/flat/…/" inputmode="url" spellcheck="false">
+        <button type="submit">Добавить</button>
+      </form>
+      <div id="urlHint" class="url-hint"></div>
       <div id="list"></div>
     </div>
     <div id="detailPanel">
@@ -208,7 +218,8 @@ var STATUSES = [
   { key: "negotiate",  label: "Обсуждать цену",  color: "#8e44ad" },
   { key: "deal_check", label: "Проверка сделки", color: "#c0392b" },
   { key: "rejected",   label: "Отказ",           color: "#95a5a6" },
-  { key: "no",         label: "Не нравится",     color: "#9E9E9E" }
+  { key: "no",         label: "Не нравится",     color: "#9E9E9E" },
+  { key: "not_interested", label: "Не интересно", color: "#A5856B" }
 ];
 var STATUS_BY_KEY = {};
 var STATUS_LABEL = {};
@@ -259,11 +270,27 @@ function findItem(id) {
   }
   return null;
 }
+function isLinkOnly(listing) {
+  return !listing || listing.link_only === true;
+}
+function hasRealData(listing) {
+  return !!listing && (listing.lat != null || listing.lon != null || listing.address != null ||
+    listing.price != null || listing.total_area != null || listing.district != null);
+}
 function addItem(listing, opts) {
   opts = opts || {};
   var id = Number(listing.id);
   var existing = findItem(id);
-  if (existing) return existing;
+  if (existing) {
+    // та же ссылка уже есть: если запись была link-only, а теперь есть данные — обогатить;
+    // заметку и статус сохраняем, url обновляем на канонический из снимка.
+    if (isLinkOnly(existing.listing) && hasRealData(listing)) {
+      existing.listing = listing;
+      if (listing.url) existing.url = listing.url;
+      saveShortlist();
+    }
+    return existing;
+  }
   var item = {
     id: id,
     url: listing.url || opts.url || "",
@@ -285,6 +312,20 @@ function updateItem(id, patch) {
   if (!it) return;
   for (var k in patch) it[k] = patch[k];
   saveShortlist();
+}
+function toggleStatusWithUndo(id, status) {
+  // reversible статус с восстановлением ПРЕЖНЕГО статуса (prev_status) при отмене.
+  var it = findItem(id);
+  if (!it) return null;
+  if (it.status === status) {
+    it.status = it.prev_status || "new";
+    delete it.prev_status;
+  } else {
+    it.prev_status = it.status;
+    it.status = status;
+  }
+  saveShortlist();
+  return it.status;
 }
 
 /* ============================== helpers ============================== */
@@ -457,6 +498,13 @@ function loadListingsFull() {
     .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
     .then(function (d) { state.listingsFull = d; return d; })
     .catch(function (e) { return null; });
+}
+function findInListings(d, id) {
+  if (!d || !Array.isArray(d.listings)) return null;
+  for (var i = 0; i < d.listings.length; i++) {
+    if (Number(d.listings[i].id) === id) return d.listings[i];
+  }
+  return null;
 }
 
 /* ============================== map layers ============================== */
@@ -714,6 +762,7 @@ function renderDetail() {
       '<div class="btn-row">' +
       '<button class="btn primary" id="btnKeep">Оставить в шорт-листе</button>' +
       '<button class="btn" id="btnNo">Смотрел, не нравится</button>' +
+      '<button class="btn" id="btnNotInterested">Не интересно</button>' +
       '<button class="btn" id="btnOpenCian">Открыть на Циане</button>' +
       '<a class="btn small" id="btnDefault" href="#" target="_blank">в браузере по умолчанию</a>' +
       "</div>";
@@ -731,6 +780,13 @@ function renderDetail() {
       selectItem(item.id, false);
       toast("Статус: Не нравится");
     };
+    document.getElementById("btnNotInterested").onclick = function () {
+      var item = addItem(l, { url: l.url, status: "not_interested" });
+      renderCounter();
+      renderMarkerLayer();
+      selectItem(item.id, false);
+      toast("Статус: Не интересно");
+    };
     document.getElementById("btnOpenCian").onclick = function () { openCian(l.url); };
     document.getElementById("btnDefault").href = l.url || "#";
     return;
@@ -747,10 +803,14 @@ function renderDetail() {
   var stOptions = STATUSES.map(function (s) {
     return '<option value="' + s.key + '"' + (it.status === s.key ? " selected" : "") + ">" + esc(s.label) + "</option>";
   }).join("");
-  var title = ll.address || ll.url || ("Циан #" + it.id);
+  var title = ll.address || (ll.link_only ? ("Циан #" + it.id) : ll.url) || ("Циан #" + it.id);
+  var linkOnlyNotice = ll.link_only
+    ? '<div class="muted" style="margin:0 0 8px">Сохранена по ссылке — в текущем снимке данных нет (адрес и координаты недоступны). Если объявление появится в снимке, данные дополнятся автоматически при повторном добавлении ссылки.</div>'
+    : "";
 
   el.innerHTML =
     "<h2 style='margin:0 0 8px'>" + esc(title) + "</h2>" +
+    linkOnlyNotice +
     listingFieldsHtml(ll) +
     zoneBlockHtml(ll.lat, ll.lon) +
     '<div class="card-sec"><h3>Статус</h3>' +
@@ -763,6 +823,7 @@ function renderDetail() {
     '<button class="btn" id="btnOpenCian">Открыть на Циане</button>' +
     '<a class="btn small" id="btnDefault" href="#" target="_blank">в браузере по умолчанию</a>' +
     '<button class="btn' + (it.status === "no" ? " active" : "") + '" id="btnNo">Смотрел, не нравится</button>' +
+    '<button class="btn' + (it.status === "not_interested" ? " active" : "") + '" id="btnNotInterested">Не интересно</button>' +
     '<button class="btn danger" id="btnRemove">Убрать из шорт-листа</button>' +
     "</div>";
 
@@ -782,6 +843,13 @@ function renderDetail() {
   document.getElementById("btnNo").onclick = function () {
     var next = it.status === "no" ? "new" : "no";
     updateItem(it.id, { status: next });
+    renderList();
+    renderMarkerLayer();
+    renderDetail();
+    toast("Статус: " + STATUS_LABEL[next]);
+  };
+  document.getElementById("btnNotInterested").onclick = function () {
+    var next = toggleStatusWithUndo(it.id, "not_interested");
     renderList();
     renderMarkerLayer();
     renderDetail();
@@ -927,6 +995,80 @@ function doImportFile(file) {
   reader.readAsText(file, "utf-8");
 }
 
+/* ============================== add by CIAN URL ============================== */
+function parseCianUrl(raw) {
+  raw = String(raw == null ? "" : raw).trim();
+  if (!raw) return { error: "Вставьте ссылку на объявление ЦИАН." };
+  var u;
+  try { u = new URL(raw); } catch (e) { return { error: "Не похоже на корректный URL." }; }
+  if (u.protocol !== "https:") return { error: "Нужен защищённый адрес https://." };
+  if (u.username || u.password) return { error: "Некорректный адрес (логин/пароль в URL)." };
+  if (u.port) return { error: "Некорректный адрес (порт не допускается)." };
+  if (u.hostname !== "cian.ru" && u.hostname !== "www.cian.ru")
+    return { error: "Допускается только домен cian.ru / www.cian.ru." };
+  var m = /^\/sale\/flat\/(\d+)\/?$/.exec(u.pathname);
+  if (!m) return { error: "Ссылка должна иметь вид /sale/flat/<id>/." };
+  var id = Number(m[1]);
+  if (!Number.isSafeInteger(id) || id <= 0) return { error: "Некорректный id объявления." };
+  return { id: id, url: "https://www.cian.ru/sale/flat/" + id + "/" };
+}
+
+function submitUrlForm(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  var input = document.getElementById("urlInput");
+  var hint = document.getElementById("urlHint");
+  var parsed = parseCianUrl(input.value);
+  if (parsed.error) {
+    hint.textContent = parsed.error;
+    hint.style.display = "block";
+    return;
+  }
+  hint.style.display = "none";
+  var id = parsed.id, canonical = parsed.url;
+
+  var existing = findItem(id);
+  if (existing) {
+    selectItem(id, true);
+    if (isLinkOnly(existing.listing)) {
+      // ссылка уже сохранена без данных — пробуем обогатить данными из снимка
+      loadListingsFull().then(function (d) {
+        var found = findInListings(d, id);
+        if (found) {
+          existing.listing = found;
+          if (found.url) existing.url = found.url;
+          saveShortlist();
+          renderList(); renderMarkerLayer(); renderDetail();
+          toast("Ссылка дополнена данными из снимка", "ok");
+        } else {
+          toast("Уже в шорт-листе (данных в снимке нет)");
+        }
+      });
+    } else {
+      toast("Уже в шорт-листе");
+    }
+    input.value = "";
+    return;
+  }
+
+  loadListingsFull().then(function (d) {
+    var found = findInListings(d, id);
+    var item;
+    if (found) {
+      item = addItem(found, { url: found.url || canonical });
+      renderCounter(); renderList(); renderMarkerLayer();
+      selectItem(item.id, true);
+      toast("Добавлено из снимка: " + (found.address || ("Циан #" + id)), "ok");
+    } else {
+      // вне снапшота — сохраняем только ссылку, без выдуманных полей/координат
+      item = addItem({ id: id, url: canonical, link_only: true }, { url: canonical });
+      renderCounter(); renderList(); renderMarkerLayer();
+      selectItem(item.id, false);
+      toast("Сохранена ссылка (в снимке данных нет)", "ok");
+    }
+  });
+  input.value = "";
+}
+
 /* ============================== #cid handling ============================== */
 function handleHash() {
   var m = /(?:^|[#&])cid=(\d+)/.exec(location.hash);
@@ -969,6 +1111,13 @@ document.getElementById("importInput").onchange = function (e) {
 };
 document.getElementById("modeCar").onclick = function () { setMode("car"); };
 document.getElementById("modePt").onclick = function () { setMode("pt"); };
+document.getElementById("urlForm").addEventListener("submit", submitUrlForm);
+window.addEventListener("storage", function (e) {
+  // другой вкладкой (дашборд/блокнот) обновлён шорт-лист — перечитать и перерисовать
+  if (e.key !== LS_KEY) return;
+  state.shortlist = loadShortlist();
+  renderCounter(); renderList(); renderMarkerLayer(); renderDetail();
+});
 document.getElementById("chkSchools").onchange = function (e) {
   if (!layerSchools) return;
   if (e.target.checked) layerSchools.addTo(map); else map.removeLayer(layerSchools);
@@ -1020,7 +1169,9 @@ window.__mbflat = {
   loadShortlist: loadShortlist, saveShortlist: saveShortlist,
   buildListingFromProp: buildListingFromProp,
   computeRadii: computeRadii, renderRadiusLayer: renderRadiusLayer,
-  renderPreviewLayer: renderPreviewLayer, currentPoint: currentPoint
+  renderPreviewLayer: renderPreviewLayer, currentPoint: currentPoint,
+  parseCianUrl: parseCianUrl, submitUrlForm: submitUrlForm,
+  toggleStatusWithUndo: toggleStatusWithUndo, findInListings: findInListings
 };
 </script>
 </body>
